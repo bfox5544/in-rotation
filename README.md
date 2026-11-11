@@ -1,8 +1,189 @@
 # In Rotation
 
-Album discovery with personalized recommendations. Portfolio project.
+Album discovery with personalized recommendations, built from real listening behavior. Rate a few albums you know and In Rotation finds the albums that the same listeners love alongside yours, then suggests the ones you haven't heard. Album artwork leads the design. Portfolio project.
 
-**Stack:** Vite + React + TypeScript (`web/`), FastAPI (`backend/`), PostgreSQL (user data), DuckDB (offline data jobs). Offline packages at the repo root: `recs/` (recommendation engine) and `ingest/` (MusicBrainz catalog).
+**Stack:** Vite + React + TypeScript (`web/`), FastAPI (`backend/`), PostgreSQL (user data), SQLite (read-only album catalog), DuckDB (offline data jobs). Offline packages at the repo root: `recs/` (recommendation engine: pandas, NumPy, SciPy sparse matrices) and `ingest/` (MusicBrainz catalog). Metadata comes from MusicBrainz and artwork from the Cover Art Archive.
+
+## Features
+
+- **Discover:** a home page with a cover collage, Picked for You once you've rated 5 albums, and Browse Albums with filters for genre and subgenre, decade or exact year, popularity, country and album type, plus sorting.
+- **Search:** albums and artists, accent- and case-insensitive, with suggestions as you type in the header.
+- **Album pages:** large artwork, release year, genres, track list, Listeners Also Love, a personal match score out of 100, and Listen On links that open the regular album (never a deluxe edition) on Spotify and Apple Music.
+- **Artist pages:** studio albums, EPs, live albums and compilations, and related artists by listener overlap.
+- **Ratings:** half-star ratings from 0.5 to 5, from a badge on any cover. Ratings are the only taste signal.
+- **For You:** up to 240 recommendations, with "Because you rated" explanations, a How Well Known slider (Anything, Less Known, Under the Radar, Deep Cuts), filters for genre, decade, length and album type, a Diversify toggle, and dismissals with Undo.
+- **Onboarding:** "Rate albums you know" with search and autocomplete to build a taste quickly.
+- **Library:** ratings, Listen Later and custom lists, each with its own page and sorting, a "Listened Yet?" nudge for albums saved a week ago and still unrated, and save-to-list from any cover.
+- **Library Insights:** a music profile from your ratings: genres, favorite artists, eras, rating habits, highest rated and recent discoveries.
+- **Album Map:** the 15,000 most-listened albums laid out by who listens to them, with genre and country labels, zoom, search, and your ratings and picks marked.
+- **Ask:** an optional discovery assistant (Google Gemini) that interprets the conversation and calls the recommendation engine, catalog and library, and can save albums to your lists.
+- **Accounts and profiles:** anonymous sessions by default, so nothing is required to start. Optional email accounts keep and merge your library across browsers, with a public or private profile page, a picture, and account deletion.
+- **Themes:** Charcoal (dark, the default), Gallery (light) and Midnight.
+- **Info pages:** How Recommendations Work, Data Sources, Privacy and Contact.
+
+## How recommendations work
+
+1. **Real listening data.** The model learned from 476,304 real listeners and the 50 albums each of them played most. An album's place in someone's list says how much they love it, not just that they have it. Each album in a listener's top 50 gets a weight between 0 and 1, half from its rank and half from its plays:
+
+   `weight = 0.5 × rank score + 0.5 × play score`
+
+   The rank score falls in a straight line from 1.00 at rank 1 to 0.02 at rank 50. The play score compares the album's plays with that listener's most-played album on a logarithmic scale, so a few obsessive replays don't swamp everything else. An album outside someone's top 50 counts as unknown, never as disliked.
+
+   | Rank  | 1    | 10   | 25   | 50   |
+   |-------|------|------|------|------|
+   | Score | 1.00 | 0.82 | 0.52 | 0.02 |
+
+2. **Your ratings.** Albums you rate 3 stars or more describe your taste, and higher stars count for more. Lower ratings keep an album off your list but don't push you away from similar music.
+
+   | Stars  | 5   | 4.5 | 4   | 3.5 | 3   |
+   |--------|-----|-----|-----|-----|-----|
+   | Weight | 1.0 | 0.9 | 0.8 | 0.7 | 0.6 |
+
+3. **Finding albums like yours.** Two albums are similar when the same people rank both near the top of their lists. Each album is a list of weights with one slot per listener (476,304 slots, nearly all empty). Cosine similarity compares two albums by the angle between their lists: 1 when the same people love both in the same proportions, 0 when nobody has both. Because it measures direction rather than size, a hit that everyone owns isn't automatically close to everything.
+
+4. **Scoring albums.** An album scores well when it's similar to several of the albums you love, most of all the ones you rated highest:
+
+   `score = sum over your albums of (rating weight × similarity)`
+
+   Albums you've rated, saved or dismissed are left out, and no artist gets more than two places. So are albums too few people have to judge (under 10 listeners, or rarely owned by fans of your albums), so every pick has a match score. "Because you rated" names the albums of yours a pick's score comes from.
+
+5. **A fair chance for smaller albums.** Similarity already allows for how many people own each album, so a famous album only scores well when fans of your albums love it more than everyone else does. Holding famous albums back any further made picks worse. To dig deeper, the How Well Known slider keeps only albums under 5,000, 1,000 or 200 listeners. Diversify picks each album for being unlike the ones above it too, so more corners of your taste show up.
+
+**Match scores.** Album pages show how well an album fits your taste, out of 100. Its score is compared with the albums that at least 0.1% of the listeners who have your albums also have, and a 92 means it beats 92% of them. Your own rating of that album is left out, so it can't inflate the score.
+
+**How well it works.** For 5,000 listeners, a fifth of their albums were hidden and the rest used as their taste. In Rotation's top 20 found the hidden albums about ten times as well as a list of the most popular albums, and about six times as well with only 10 albums to go on. Six ways of recommending were tested, and comparing albums beat comparing listeners, the method In Rotation used before, by 8%.
+
+**Limits.** The data is a snapshot, so new releases aren't in it. Albums very few people listed can't be recommended with confidence. And it can only find albums that fans of your albums already found. For something different, there's Ask.
+
+### How each setting was chosen
+
+Every setting was picked by testing: some of each test listener's albums were hidden, recommendations were made from the rest, and the setting that found the hidden albums best won. Scores below are NDCG@20, a ranking score from 0 to 1 that rewards finding hidden albums near the top of the first 20.
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Compare you with other listeners, or compare albums? | Compare albums. | Item kNN 0.260, ALS 0.251 (but 97% of picks from the most famous 1% of albums), user kNN 0.241, most popular 0.026. Comparing albums also recommended a wider range of albums and stayed ahead with only 10 albums. |
+| Rank in someone's top 50, or how often they play it? | Both count equally. | Rank alone was 1% ahead with full queries but 3% behind with 10 albums, where plays alone came out ahead. Counting both stays close to the best either way. |
+| Should a 5-star album count for more than a 3-star one? | Yes, a little more. | Equal weights 0.257, a little more for higher stars 0.263, much more 0.256. 3-star albums still say something about your taste. |
+| Should famous albums be held back? | No. | No adjustment 0.260, gentle (β 0.1) 0.245, moderate (β 0.25) 0.136. |
+| How does How Well Known find smaller albums? | It leaves out albums over the listener limit. | Loved albums under 1,000 listeners found in the top 20: normal list 0.104, leaving out albums over the limit 0.234, also leaving out albums under 10 listeners 0.240. |
+| Which albums is a match score measured against? | Albums enough fans of your albums have. | Requiring 0.1% of the listeners who have your albums scores 77% of loved albums (typical score 98). 0.3%: 66%, 1%: 49%, 3%: 31%. A score of 95+ is over 200 times likelier to be a loved album than a score under 50. |
+
+## Technical details
+
+### Six models, one test
+
+The site first recommended with user-based collaborative filtering. To check that choice, five other recommender families were run through exactly the same test: same listeners, same hidden albums, same weight matrix, same metrics. Each had to recommend for listeners it never saw in training, the way the site meets a new user, so the factor models fold a new listener in rather than look up a trained row.
+
+- **Popularity:** the most-listened albums, the same for everyone. The floor every model must clear.
+- **User kNN:** cosine similarity between your ratings and every listener's top 50, then a weighted sum over the 100 nearest. What the site ran first.
+- **Item kNN (served):** each album scores by its summed cosine similarity to the albums you rated, with similarity measured over listeners. Computed as (q Cᵀ) C with C column-normalized, so no 633K × 633K album matrix is stored.
+- **RP3beta:** a three-step random walk, album to listener to album, divided by popularity to the power β (Paudel et al. 2017).
+- **PureSVD:** a truncated SVD of the weight matrix. Your ratings are projected onto the top k factors and back (Cremonesi et al. 2010).
+- **ALS:** implicit-feedback matrix factorization (Hu, Koren and Volinsky 2008) through the `implicit` library. A new listener is folded in with one least-squares solve.
+
+EASE, a strong item-based model, was left out: it needs a dense album × album matrix, 633K × 633K here, about 1.6 TB in float32.
+
+### How they were tested
+
+Leave-out evaluation on the historical listeners, the only ground truth the data has. For each test listener a random 20% of their albums are hidden, the rest form the query, and the hidden albums are the right answers. Test listeners are removed from the training matrix first. Each family was tuned on one sample of 5,000 listeners and then scored once on a different 5,000, so no model was tuned on the listeners it's judged on.
+
+- **NDCG@20:** discounted cumulative gain of the top 20 (relevance 1 for a hidden album, discounted by log2 of its position), divided by the best possible. The main metric.
+- **Recall and Hit Rate@20:** share of the hidden albums that make the top 20, and share of listeners with at least one there.
+- **Distinct Albums and Head Share:** how many different albums the model recommends across all 5,000 listeners, and the part of its picks taken from the 1% most-listened albums (6,331). Accuracy alone rewards recommending hits.
+- **Paired difference:** each model's NDCG@20 minus user kNN's, per listener, averaged, with a 95% interval. Both models face the same listeners, so the pairing removes most of the noise.
+- **10-album check:** the same listeners with only 10 albums in the query, closer to a new site user than the full ~38.
+
+### Results
+
+Test listeners, full queries. Query time is per listener in batches of 200.
+
+| Model | NDCG@20 | Recall@20 | Hit Rate@20 | Distinct Albums | Head Share | Fit | Query |
+|---|---|---|---|---|---|---|---|
+| Popularity | 0.026 | 0.030 | 0.22 | 35 | 100% | 0 s | 5 ms |
+| User kNN, K 100, β 0.25 (previous) | 0.240 | 0.228 | 0.82 | 20,161 | 75% | 1 s | 5 ms |
+| **Item kNN, β 0 (served)** | **0.259** | **0.251** | **0.86** | **23,368** | **75%** | **1 s** | **32 ms** |
+| RP3beta, β 0.1 | 0.206 | 0.202 | 0.78 | 19,182 | 82% | 0.5 s | 33 ms |
+| PureSVD, 256 factors | 0.182 | 0.175 | 0.70 | 2,693 | 100% | 47 s | 5 ms |
+| ALS, 256 factors, α 20 | 0.251 | 0.245 | 0.83 | 6,632 | 97% | 12 min | 6 ms |
+
+Paired NDCG@20 difference from user kNN, with 95% intervals:
+
+| Model | Full queries | 10-album queries |
+|---|---|---|
+| Item kNN | +0.0190 ± 0.0028 | +0.0041 ± 0.0023 |
+| ALS, 256 factors | +0.0106 ± 0.0042 | −0.0016 ± 0.0028 |
+| RP3beta | −0.0350 ± 0.0038 | −0.0029 ± 0.0032 |
+| PureSVD, 256 factors | −0.0582 ± 0.0044 | −0.0449 ± 0.0032 |
+
+### What the results say
+
+- **Item kNN won, and it's what the site serves.** It came out 7.9% ahead of user kNN on full queries and 3% ahead when listeners had only 10 albums. It recommended more different albums than user kNN (23,368 against 20,161) and leaned on hits no more than before. The price is speed: about 32 ms a listener against 5 for user kNN, still quick enough for a page.
+- **ALS looked good until its picks were checked.** At 256 factors it beat user kNN on full queries and tied it with 10 albums, but 97% of its picks came from the 1% most-listened albums and it covered a third as many albums overall. That isn't much use on a discovery site. It also took 12 minutes to train and was still improving at the biggest size tried. PureSVD has the same pull toward hits, with less accuracy.
+- **RP3beta is the adventurous one.** It trailed on full queries but was within the margin of error with 10 albums. Turned toward less popular albums (β 0.25), it reached two and a half times as many different albums, at some cost to accuracy.
+- **User kNN did fine, just not well enough.** Switching meant rebuilding Because You Rated, the match score and filtered lists around album similarity and testing them again.
+
+### Tuning each model
+
+Every family got a small grid on the tuning sample, and its best setting went to the test. The popularity adjustment that helps user kNN hurts the item-based and factor models, so they were tested without it.
+
+| Model | Grid | Best | Worst | Note |
+|---|---|---|---|---|
+| User kNN | K 50, 100, 200 × β 0, 0.25 | K 100, β 0.25: 0.238 | K 200, β 0: 0.225 | Flat. The settings chosen in the first sweep still come out on top. |
+| Item kNN | β 0, 0.1, 0.25 | β 0: 0.260 | β 0.25: 0.136 | Very sensitive to the popularity adjustment. β 0.1 already costs 0.015. |
+| RP3beta | β 0.1, 0.25, 0.4 | β 0.1: 0.201 | β 0.4: 0.153 | β 0.25 recommends 2.5× the distinct albums for almost the same score. |
+| PureSVD | 256 factors, then 128 and 512 | 256: 0.183 | 128: 0.175 | Peaks in the middle. More factors don't help. |
+| ALS | 64 to 256 factors × α 20, 40, 15 iterations | 256, α 20: 0.251 | 64, α 20: 0.194 | Still rising at the largest size tried. |
+
+### The served model
+
+Each listener u gives a weight to every album a in their top 50:
+
+```
+w(u, a) = α · (1 − (rank − 1) / 50) + (1 − α) · log(1 + plays) / log(1 + max plays of u),  α = 0.5
+```
+
+An album is the column of those weights across all 476,304 listeners, and two albums are compared by cosine:
+
+```
+sim(a, b)  = Σ over listeners of w(u, a) · w(u, b)  ÷  (‖w(·, a)‖ ‖w(·, b)‖)
+score(b)   = Σ over your rated albums a of q(a) · sim(a, b)
+```
+
+Your ratings of 3 stars and up form the query q, weighted 1.0 for 5 stars down to 0.6 for 3. Columns are scaled to length 1 once at startup, so scoring every album is (q Cᵀ) C: two sparse products through the listeners, with no 633K × 633K similarity matrix stored. Albums with under 10 listeners, or held by under 0.1% of the listeners who have one of your albums, are left out: with few ratings, cosine otherwise favours albums with two or three listeners who all share them. A smaller album may instead be held by 5% of its own listeners (and 3), since 0.1% of a big audience can be more than a Deep Cut's whole audience. A first page takes about 120-250 ms on the full data and later pages about 50 ms, because scores are cached per taste. The list is then re-ranked: rated, saved and dismissed albums are removed, no artist gets more than two places, and editions merge. Every album has a score, so a For You filter only narrows the ranking.
+
+The same scores drive the rest of the site. Listeners Also Love on an album page is the albums most similar to it. Because You Rated names the rated albums that carry the most of a pick's score. The match score is the percentile of an album's score among the albums held by at least 0.1% of the listeners who have one of your albums (and 3 of them).
+
+### Data and cleaning
+
+The dataset ([Music Listening Data, ~500k users](https://www.kaggle.com/datasets/gabrielkahen/music-listening-data-500k-users)) gives each listener's 50 most-played albums with rank, play count and an optional MusicBrainz id. It has no ratings and no dates. Cleaning runs in DuckDB in about 31 seconds and writes Parquet.
+
+| Step | Count | What happened |
+|---|---|---|
+| Raw rows | 23,822,550 | 476,451 listeners, up to 50 albums each, with rank and play count |
+| Invalid rows dropped | 28,766 | 17 with no album or artist name, 28,749 empty after normalizing |
+| Album identity | 1,830,875 → 1,656,172 | Distinct artist and title pairs merged into normalized keys: accents, case and punctuation folded, edition tags (Deluxe, Remastered, Anniversary...) stripped |
+| Duplicates within a listener | 268,860 | Rows merged into one, keeping the best rank and summing plays |
+| Albums with 1 listener | 1,023,118 | Removed: one listener can't link anyone to anyone |
+| Listeners with under 5 albums | 147 | Removed after the album filter |
+| Kept | 476,304 × 633,053 | 22,501,513 listener-album pairs, 0.0075% of the matrix filled, median 49 albums per listener |
+
+Albums are identified by normalized artist and title, because the MusicBrainz id names an edition and is blank on 24% of rows. Matching model albums to the MusicBrainz catalog covers 92.3% of all listening and 97.1% of albums with 1,000 or more listeners. Unmatched albums still help find similar albums but are never shown.
+
+### Experiments behind each feature
+
+Each change to ranking was tested the same way before it shipped. Runs 1-5 tested the user kNN model the site originally used. Run 7 checked their settings again on item kNN. Full write-ups are in [docs/experiments.md](docs/experiments.md).
+
+| Run | Question | Result | Decision |
+|---|---|---|---|
+| 1. Parameter sweep | Which weights, neighbourhood size, aggregator and popularity adjustment? | 80 settings in three stages. K 200 → 100 plus β 0.25: +0.0140 ± 0.0023 NDCG@20. Plays-only weights and asymmetric cosine: +0.0012 ± 0.0013, noise. | Linear rank and plays, α 0.5, cosine, K 100, weighted sum, β 0.25 |
+| 2. Rating weights | Should higher star ratings weigh more in the query? | Ratings simulated from rank buckets, 3 seeds. Gentle +0.0044 ± 0.0009 NDCG@20 over equal weights, steep −0.0020 ± 0.0020. | 5★ 1.0, 4★ 0.8, 3★ 0.6, half stars interpolated, under 3★ excluded |
+| 3. Less popular picks | How should How Well Known find smaller albums people love? | Recall@20 of loved albums under 1,000 listeners: listener cap without the adjustment 0.161, stronger adjustment (β 0.5) 0.088, uncapped 0.096. | Caps of 5,000, 1,000 and 200 listeners, β 0 inside a cap, 10-listener floor |
+| 4. Match score | How many neighbours make a calibrated 0-100 score? | 300 neighbours, 2 must hold the album: 64.7% of loved albums scored, median 92, scores of 95-100 are 36× likelier to be loved than scores under 50. | Percentile among albums the 300 nearest listeners hold, no adjustment |
+| 5. Filtered lists | Do filters need a wider neighbourhood? | Recall@240 inside the filter, K 100 against K 1,000: jazz 0.54 → 0.73, 1990s electronic 0.54 → 0.91. | Filtered lists rank by K 1,000, fill from K 5,000 |
+| 6. Model comparison | Is user kNN the right model? | Six families on one split. Item kNN +0.0190 ± 0.0028 NDCG@20, ALS +0.0106 ± 0.0042, RP3beta and PureSVD worse. | Switch to item kNN, no popularity adjustment |
+| 7. Item kNN checks | Do the settings chosen for user kNN still hold? | Rank and plays half and half within 0.003 of the best at both query sizes. Gentle star weights best at both. Caps with the 10-listener floor best at every cap. Match support of 0.1%: 76% of loved albums scored, median 98. With 3 albums, 21% of picks had under 10 listeners, and leaving thinly held albums out raised NDCG@20 from 0.085 to 0.092. | All kept, plus a 0.1% match reference set, and picks limited to albums with 10+ listeners that the match score can score |
+| 8. Diversify | How strong should the Diversify button be? | Maximal marginal relevance over the best 500 picks. Strength 0.7: picks 75% less alike, 87% of rated albums lead a pick, NDCG@20 −5% on full queries and −27% with 10 albums. Strength 0.5 kept more accuracy but left picks closer together. | Strength 0.7, only when the button is on |
+| 9. Support for smaller albums | Why was Deep Cuts short of picks? | 0.1% of the listeners who have your albums is more than most albums under 200 listeners have in all, so 29% of Deep Cuts lists (10 albums) couldn't fill. Allowing 5% of an album's own listeners: smaller albums found 0.151 → 0.181, 1% short. | 0.1% of those listeners or 5% of the album's own, whichever is fewer |
 
 ## First run
 The API needs two data products before it starts: the model (`data/model/`) and the catalog (`data/catalog.db`). Build them once, in this order:
@@ -102,176 +283,10 @@ albums, scores = rec.recommend(query_vector(idx, rec.n_albums), n=20)
 
 Put your dataset in `data/` (git-ignored).
 
-## Test
+## Run the test suites
 ```
-cd backend && pytest               # 145 API tests (plus 1 live Gemini test, skipped unless asked): browse filters, search, artists, sessions, accounts, lists, ratings, dismissals, covers, recommendations, catalog matching, redirects, track lists, the assistant (scripted fake model; no quota used), data migrations (SQLite)
-# one real Gemini request (uses quota; needs GEMINI_API_KEY): INROTATION_LIVE_GEMINI=1 pytest tests/test_gemini_live.py
-# same tests on Postgres (the database is emptied each test; never point this at real data):
-# docker compose exec db psql -U in_rotation -c 'CREATE DATABASE in_rotation_test'
-# INROTATION_TEST_DATABASE_URL=postgresql+psycopg://in_rotation:in_rotation_dev@localhost:5432/in_rotation_test pytest
-cd recs && pytest                  # 84 tests: cleaning rules, edition merging, weights, matrix, recommender, item kNN, metrics, album map layout, model comparison
-cd ingest && pytest                # 7 tests: MusicBrainz dump parsing, refresh (fake mirror: checksum, coverage gate, swap), cover pre-fetch
-cd web && npm run build            # type-check and production build
+cd backend && pytest     # API tests on SQLite; set INROTATION_TEST_DATABASE_URL to run them on Postgres
+cd recs && pytest        # recommendation engine
+cd ingest && pytest      # catalog jobs
+cd web && npm run build  # type-check and production build
 ```
-
-## How to check the basics by hand
-1. Open the site with the API running. Discover loads albums from the API; the genre chips filter on the server.
-2. Search "beyonce" (finds Beyoncé), "hip hop", "r&b", and "zzz" (empty state).
-3. Rate and bookmark a few albums, then reload: they persist (stored under an anonymous session).
-4. Open the site in a private window: it starts with an empty library, since it is a separate anonymous user.
-5. Go to `/start`, rate 5 albums 3 stars or more, and continue to For you.
-6. Stop the API and reload: a clear message explains how to start it.
-
-## How to check the recommender offline
-1. `cd recs && pytest` and a smoke sweep: `python -m recs.evaluate --users 300 --out data/experiments-smoke` (about 1.5 min). CF should beat popularity by a wide margin.
-2. Read `docs/experiments.md`. Check that the numbers match `data/experiments/results.md` and `short_queries.csv`, (beta is set to 0.25).
-3. Try your own taste with the Python snippet above (use album keys from `albums.parquet`). Judge whether the lists are good, and how much same-artist repetition you'd accept.
-
-## How to check the catalog and recommendations
-1. Build `data/catalog.db` (see "Build the catalog"); it prints match coverage. Expect about 92% of listening and 97% of albums with 1,000+ listeners matched, and read the top unmatched list.
-2. `cd backend && pytest`, then start the API: it should log startup in a few seconds.
-3. In the browser:
-   - Discover shows real covers in the mosaic; albums without archived art show a "No Cover" tile.
-   - Search "emotion", "gza", "r&b".
-   - Open an album: release year, genres, and "Listeners also love".
-4. Go to `/start`, search for and rate 5 albums you know well, then open For you.
-   - Judge the list, and check that no artist appears more than twice.
-   - Rated albums are never suggested back to you.
-5. With no ratings (private window), For you explains it is showing the most-listened albums.
-
-## How to check accounts and lists
-1. Start Postgres, run `alembic upgrade head`, then start the API. Stop Postgres (`docker compose stop db`) and restart the API: it should refuse to start and say how to fix it.
-2. In the browser, rate a few albums and save a listen-later album. Then open **Sign in** in the header, choose "Create account", and sign up. Your library should be unchanged.
-3. Open a private window, save a different album, and sign in there with the same account. Both libraries should now be merged, with no duplicates.
-4. Sign out: that window starts with an empty library. Sign in again and everything is back.
-5. On an album page, use "Add to list" to create a list and tick it on and off. On Library, rename and delete a list.
-   - Check the layout of the list menu, the account form and the list headers at phone width.
-6. Albums on any list never appear in For you.
-
-## How to check artist pages and refresh
-1. Search "radiohead": an artist chip appears above the albums. Open it.
-   - Studio albums come first; EPs, live albums and other releases follow.
-   - "Their listeners also play" shows one album per related artist. Judge whether those artists make sense.
-2. Artist names on album cards and album pages link to the artist page.
-3. `python -m ingest.refresh --check` reports the current and latest dump. Read the swap report of a real refresh (`retired_albums`, coverage before and after), then restart the API.
-
-## How to check ratings
-1. `alembic upgrade head` from `backend/` (adds `user_ratings`), then restart the API.
-2. On an album page, rate with the stars: the left half of a star gives a half star. Choosing the same value again clears the rating.
-   - Check the stars by keyboard (Tab to the stars, then the arrows, 1-5 and Delete) and on a phone (tap the halves).
-3. Rated albums show a "★ 4½" badge on their covers. The Library groups them from highest to lowest.
-4. Rate an album 2.5 stars or less: it never comes back as a suggestion, but it doesn't steer them either.
-5. Move one album from 3 to 5 stars and compare For you before and after. The change is deliberately gentle (docs/experiments.md, run 2).
-6. Optional: `python -m recs.ratings --users 300 --seeds 7` reproduces a small version of the experiment (about 1 min).
-
-## How to check rating badges and dismissals
-1. `alembic upgrade head` from `backend/` (adds `user_dismissals`).
-2. Every cover shows a badge top-left: "☆ Rate" or "★ 4½". Click it, pick a value (left half of a star = half star), and the selector closes with the badge updated.
-   - Try it by keyboard too: Tab to the badge, Enter, the arrows, Enter, and Escape to cancel.
-   - Check at phone width that the selector doesn't run off the screen.
-3. On For you, click the X on an album: it disappears, the list refills, and "Undo" brings it back. Reload: dismissed albums stay gone.
-
-## How to check cover loading
-1. Reload Discover and search "radiohead": covers of popular albums appear at once (served from `data/covers`).
-2. Open an obscure album: the first view may take a few seconds (fetched once from the archive), then it is instant, including after a reload.
-3. In the browser's network panel, `/api/covers/...` responses carry `Cache-Control: public, max-age=2592000`.
-
-## How to check "How well known?" on For you
-1. With a few albums rated, open For you and move the slider. Each step reloads the list (the old one dims while it loads).
-2. "Less known" drops the big records; "Under the radar" and "Deep cuts" should still sound like your ratings, from smaller artists.
-3. Reload the page: the slider keeps its step (stored in this browser only).
-4. `curl -H "Authorization: Bearer <token>" "localhost:8000/api/me/recommendations?depth=3"`; `depth=4` is a 422.
-5. Rerun the experiments behind the steps: `python -m recs.less_popular --users 2000` (run 3, the earlier user kNN model, about 5 minutes) and `python -m recs.item_checks --users 2000` (run 7, item kNN).
-
-## How to check item kNN
-1. With a few albums rated, open For You. Picks should sit close to your ratings, and "Because you rated" should name different albums of yours across the page, not the same one every time.
-2. An album page's Listeners Also Love is that album's most similar albums. The match block reads "Most like X and Y of the albums you rated."
-3. How Recommendations Work describes comparing albums. Its Technical Details tab marks item kNN as served.
-4. Engine: `python -m recs.item_checks --users 2000` (run 7, about 45 minutes) rechecks the weights, star weights, How Well Known caps and match score on item kNN. `python -m recs.compare --users 5000` (run 6, about 1 h 40 min) reruns the comparison.
-
-## How to check Diversify
-1. With a few albums rated, open For You and click Diversify. It turns amber, the URL gets `?diverse=1`, a line explains it, and the list reloads on page 1 with more varied picks (fewer near-duplicates, more of your rated albums leading a pick).
-2. It combines with How Well Known and Filters. Reload: it stays on. Click again to turn it off.
-3. `curl -H "Authorization: Bearer <token>" "localhost:8000/api/me/recommendations?diverse=true"`. `diverse=maybe` is a 422.
-4. Experiment: `python -m recs.diversity --users 1000` (run 8, about 30 minutes).
-
-## How to check filters on For You
-1. With a few albums rated, open For You and click Filters. The dialog is titled Filter Your Picks and has Genre, Decade, Length and Album Type (no Popularity: the How Well Known slider does that).
-2. Choose a genre and a decade, then Show Picks. The list reloads on page 1, the count says how many picks there are, and chips show the filters. Removing a chip or Clear All widens the list again. The URL carries the filters (`?genre=jazz&decade=1960`).
-3. Filters combine with the slider. Length: Over an Hour should bring up double albums. A combination nothing close to your taste matches says so and suggests removing a filter.
-4. `curl -H "Authorization: Bearer <token>" "localhost:8000/api/me/recommendations?genre=jazz&year_from=1960&year_to=1969&length=30_45"`. `type=vinyl` and `length=forever` are 422.
-5. Item kNN scores every album, so a filtered list is the full ranking narrowed to the filter. The run 5 experiment, from the earlier user kNN model, still runs: `cd backend && PYTHONPATH=.:.. python experiments/for_you_filters.py` (about 2 minutes).
-
-## How to check themes
-1. Open Account (Sign In in the header). Under the form, Theme offers Charcoal, Gallery and Midnight. Choosing one recolors the whole site at once.
-2. Reload: the theme stays, with no flash of the dark default. Another browser keeps its own choice.
-3. Signed in, the same picker is in Profile Settings.
-4. Look over the home page, an album page, For You, the Album Map and Insights in Gallery, the light theme. Chips on covers, the rating popover and the filter dialog should all be readable.
-
-## How to check track lists
-1. Open an album page (OK Computer, The Wall, Lemonade): a Tracks section under the buttons lists numbers, titles and lengths, with the track count and running time on top.
-2. Multi-disc albums (The Wall) have "Disc 1" and "Disc 2" headings; guest credits ("Beyoncé feat. Jack White") show under the track title.
-3. "Track list from MusicBrainz" links to the release the list was taken from.
-4. Catalogs built before this change are refused by the API with the rebuild command (catalog format 3).
-
-## How to check the Album Map
-1. Build it once with `python -m ingest.album_map` from the repo root (about a minute), then open **Map** in the header. Until it's built, the page shows the API's message with that command.
-2. Fully zoomed out you see gray dots with genre and country names, such as Heavy Metal, Hip Hop, K-Pop and Brazil. Drag to move, scroll or pinch to zoom, double-click to zoom in on a spot, or use +, − and Fit. As you zoom, more labels appear, then covers replace the dots, then titles appear under the bigger covers.
-3. Rate a few albums. Your ratings show as amber dots, and your For You picks as teal rings. The legend counts how many are on the map, and Zoom to Yours frames them. Opening the map doesn't change Insights' recommendation counts.
-4. Type in Find on the Map and press Enter. The map flies to the album and opens its card. Open Album, then Back, returns to the same view with the card open. On an album page, "See It on the Album Map" does the same. For an album that isn't on the map, a note says so.
-5. Highlight a Genre lights up that genre's albums and dims the rest.
-
-## How to check the footer pages
-1. Every page ends with the footer: In Rotation © year, then Contact, Data Sources and How Recommendations Work. On a short page (an empty Library) it sits at the bottom of the window. On a phone the links stack.
-2. Each link opens its page at the top, and the current one is underlined in amber.
-3. Contact: send a message (optionally with an email for a reply), then read it with `python -m app.feedback` from `backend/`. A sixth message within an hour is refused. To show a public address too, set `VITE_CONTACT_EMAIL=you@example.com` in `web/.env` and rebuild.
-
-## How to check match scores
-1. Rate a few albums 3 stars or more, then open an album page. Under the genres, a "Match" block shows a score out of 100, a short meter, and a line like "Most like OK Computer and Kid A of the albums you rated." "How Match Works" explains it.
-2. Albums close to your taste score in the 90s, and albums far from it score low or get "No match score" with the reason. With no ratings of 3 stars or more, it asks you to rate some.
-3. Open an album you rated: the score is the same as before you rated it ("Scored as if you hadn't rated it").
-4. Rate another album and come back: the score updates.
-5. API: `curl -H "Authorization: Bearer <token>" localhost:8000/api/albums/<id>/match`. Validation: `python -m recs.item_checks --users 2000` (run 7 in `docs/experiments.md`; run 4, `python -m recs.match`, validated the earlier user kNN version).
-
-## How to check profiles
-1. Signed out, press **Sign In** and **Create Account**: name, username, email, password, and Public Profile (off by default). An account is a profile; you land on your page at `/u/<username>`.
-2. The header's **Profile** link (with your picture) replaced "Account". Your page has Ratings (Newest First / Highest Rated), Insights (from ratings only: no Listen Later, lists or recommendation stats) and, for you only, **Settings**.
-3. In Settings, add a picture: any JPEG, PNG, WebP or GIF up to 8 MB. It comes back as a 256 px square; a phone photo's location data is dropped. Sign Out is there too.
-4. While private, a private window gets "Profile Not Found" at your link; you see your page with a note. Turn on **Public Profile** and the link works for anyone, without signing in.
-5. An account made before profiles: its Profile link opens "Finish Your Profile" to choose a username.
-6. API: `curl localhost:8000/api/users/<username>`, `curl localhost:8000/api/users/<username>/insights`.
-
-## How to check Insights
-1. Rate and save a few albums, then open **Library** and the **Insights** tab (`/library?tab=insights`). With fewer than 3 it invites you to choose albums.
-2. The profile shows your top-rated covers, a one-line summary ("You gravitate toward…"), and your counts; then genres, rating habits, favorite and most-collected artists, eras, highest rated, recently discovered, and recommendations.
-3. Hover or tab onto a column to see its numbers; "Show as Table" lists them all.
-4. Recommendation stats count from now on: open For You or ask the assistant, then rate, save or dismiss some of what it suggests and reload Insights.
-5. API: `curl -H "Authorization: Bearer <token>" localhost:8000/api/me/insights`.
-
-## How to check streaming links
-1. Open an album page (OK Computer, Illmatic, Abbey Road). Under the buttons, "Listen On" has Spotify and Apple Music; each opens the regular album on that service in a new tab: OK Computer, not OKNOTOK; Illmatic, not Illmatic XX; Abbey Road's remaster where that is all there is.
-2. Both go through the API: `curl -I localhost:8000/api/albums/<id>/listen/spotify` (or `apple-music`) answers 302. The first click checks MusicBrainz's candidate links against the service's own title; later clicks are cached for a week.
-3. An album a service only offers as a deluxe or other edition (Apple's "4 (Expanded Edition)") opens that service's search page instead.
-4. `sqlite3 data/catalog.db "SELECT service, count(DISTINCT album_id) FROM album_links GROUP BY 1"`: about 141K albums with Spotify candidates and 144K with Apple ones.
-
-## How to check filters
-1. On the home page, under "Browse Albums", press **Filters**. A dialog opens: Genre (type to search genres and subgenres together), Decade or Exact Year, Popularity, Country and Album Type. Every filter is optional and they combine.
-2. Type "hop": Hip Hop comes first, with its subgenres and Trip Hop after it, each showing its album count and parent genre. A genre includes its subgenres and fusions, so Electronic also lists trip hop and house albums.
-3. The main button counts matching albums as you change things ("Show 1,234 Albums"). Esc or a click outside closes without applying; "Clear All" empties the dialog.
-4. Filters live in the URL (`/?genre=trip+hop&country=GB`), so Back works and the link can be shared. "Show More" loads 48 more; "Clear Filters" goes back to the most-listened albums. On a phone the dialog fills the screen.
-5. API (it also takes `artist` and `sort`, which the page doesn't offer): `curl "localhost:8000/api/albums?genre=electronic&country=GB&year_from=1990&year_to=1999&type=studio&sort=rated"`, `curl localhost:8000/api/browse/options`, `curl "localhost:8000/api/browse/genres?q=hop"`.
-
-## How to check account deletion, sign-in limits and cleanup
-1. Sign in, open your profile's Settings and press **Delete Account**. A wrong password says so. The right one deletes everything, shows a toast and leaves this browser with an empty library. Other browsers signed in to it start afresh.
-2. On **Sign In**, enter a wrong password 6 times for one email: the sixth says to wait 15 minutes, even with the right password.
-3. Cleanup: `python -m app.cleanup --dry-run` from `backend/` counts anonymous users that are empty and unseen 7 days, or unseen 365. Without `--dry-run` it deletes them. Run it once a day once deployed. Accounts are never touched.
-
-## How to check the Ask assistant
-Needs `GEMINI_API_KEY` in `backend/.env` (see "Run it"). Each message uses 1-4 model requests.
-1. `INROTATION_LIVE_GEMINI=1 pytest tests/test_gemini_live.py` from `backend/`: one real request that must call a tool.
-2. Rate a few albums, open **Ask** and try the suggested prompts. Recommendations appear as album cards; the text should explain them from your own ratings ("people who love Visions, which you gave 5 stars") and never quote numbers the cards don't support.
-3. Follow up in the same chat: "something less mainstream", "which of those is closest to Grimes?", "only the 1990s". The second answer shouldn't repeat albums from the first.
-4. "Add the first three to my listen later list": the reply says what was saved, the bookmarks on the cards turn teal, Undo removes them. "Put them in a new list called Night drives" creates the list; Undo deletes it.
-5. Earlier chats lists past conversations; New chat starts over. A second browser can't open your conversation (404).
-6. Limits: send 6 messages within a minute (the 6th is refused). With `INROTATION_CHAT_PER_DAY=2`, the third message of the day is refused, and deleting your chats doesn't reset it. With `INROTATION_CHAT_PER_DEVICE_PER_DAY=2`, a third private window on the same computer is refused too. With `GEMINI_DAILY_CALLS=4` the second message says the assistant has reached today's request limit.
-7. Remove the key and restart: Ask shows how to turn it on, and the rest of the site is unchanged.
