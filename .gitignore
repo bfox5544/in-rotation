@@ -1,0 +1,32 @@
+# Data: the dataset, model, catalog, covers, bundles and local databases never go into git
+data/
+*.duckdb
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+*.tar.gz
+
+# Secrets: every .env, but keep the examples
+.env
+.env.*
+!.env.example
+*.tok
+*.pem
+*.key
+
+# Builds and installs
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Local tools and OS files
+# Local AI assistant notes and settings
+CLAUDE.md
+.claude/
+.DS_Store
+*.log

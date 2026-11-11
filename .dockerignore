@@ -1,0 +1,17 @@
+# Keep the build context small: the dataset, data folder and local installs never go into an image.
+**/node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+data/
+*.duckdb
+*.parquet
+*.egg-info
+.git
+.pytest_cache
+**/.pytest_cache
+deploy/.env

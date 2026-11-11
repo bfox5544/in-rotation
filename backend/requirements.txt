@@ -1,0 +1,11 @@
+fastapi>=0.121          # Depends(scope="function"), see app/db.py
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+alembic>=1.13
+httpx>=0.27             # cover cache fetches (app/covers.py)
+psycopg[binary]>=3.2
+# The recommendation engine and catalog jobs (repo root); run pip from backend/.
+-e ..
+google-genai>=2.34,<3   # the assistant (app/chat/gemini.py); 3.x changes function calling
+python-dotenv>=1.0      # reads backend/.env
+pillow>=11              # profile pictures: re-encoded to a 256 px WebP without metadata (app/profiles.py)

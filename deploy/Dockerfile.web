@@ -1,0 +1,14 @@
+# The site: the Vite build, served by Caddy, which also proxies /api to the API and handles HTTPS.
+#   docker build -f deploy/Dockerfile.web -t inrotation-web .
+FROM node:20-slim AS build
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web ./
+ARG VITE_CONTACT_EMAIL=
+ENV VITE_CONTACT_EMAIL=$VITE_CONTACT_EMAIL
+RUN npm run build
+
+FROM caddy:2.8
+COPY --from=build /web/dist /srv
+COPY deploy/Caddyfile /etc/caddy/Caddyfile

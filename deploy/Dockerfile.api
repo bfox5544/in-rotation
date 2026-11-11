@@ -1,0 +1,26 @@
+# The API (FastAPI + the recommendation engine). Build from the repo root:
+#   docker build -f deploy/Dockerfile.api -t inrotation-api .
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
+# postgresql-client: pg_dump for the nightly backup job (deploy/jobs.sh), which runs from this image too
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml ./
+COPY recs ./recs
+COPY ingest ./ingest
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN cd backend && pip install -r requirements.txt
+COPY backend ./backend
+COPY deploy/jobs.sh /usr/local/bin/inrotation-jobs
+RUN chmod +x /usr/local/bin/inrotation-jobs && useradd --uid 10001 --create-home app
+
+USER app
+WORKDIR /app/backend
+ENV INROTATION_MODEL_DIR=/data/model INROTATION_CATALOG=/data/catalog.db INROTATION_MAP=/data/album_map.json \
+    INROTATION_COVERS=/covers INROTATION_AVATARS=/avatars INROTATION_TRUST_PROXY=1 INROTATION_CORS_ORIGINS=
+EXPOSE 8000
+# One worker: the engine holds the listening matrix in memory, and a second worker would double that.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-server-header"]

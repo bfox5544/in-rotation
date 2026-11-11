@@ -1,0 +1,3 @@
+# Only for the model comparison (python -m recs.compare, docs/experiments.md run 6). Not needed by the site.
+-r requirements.txt
+implicit==0.7.2        # ALS

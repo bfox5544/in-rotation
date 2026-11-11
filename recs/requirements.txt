@@ -1,0 +1,7 @@
+duckdb>=1.0
+pandas>=2.0
+pyarrow>=15
+numpy>=1.26
+scipy>=1.11
+scikit-learn>=1.4      # Album Map layout (recs.album_map): truncated SVD + t-SNE, offline only
+pytest>=8

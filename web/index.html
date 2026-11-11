@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>In Rotation: find your next album</title>
+    <script>
+      // The theme chosen under Account (src/lib/theme.ts), applied before the page draws.
+      try {
+        var t = localStorage.getItem("inrotation.theme");
+        if (t === "gallery" || t === "midnight") document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+    </script>
+    <!-- Fonts are served from this site (public/fonts), so visitors' browsers never contact Google. -->
+    <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/bricolage-grotesque-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link href="/fonts/fonts.css" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
