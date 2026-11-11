@@ -8,6 +8,7 @@ const LINKS = [
   { to: HOW, label: "How Recommendations Work" },
   { to: `${HOW}?tab=technical`, label: "How Model Was Chosen" },
 ];
+const REPO = "https://github.com/bfox5544/in-rotation";
 
 /** The footer on every page (rendered once by App, below <main>). The app keeps the scroll position
  *  between pages, so these links start the new page at the top. Two links share a path and differ by
@@ -37,6 +38,7 @@ export function Footer() {
               </Link>
             );
           })}
+          <a href={REPO} target="_blank" rel="noopener noreferrer">GitHub</a>
         </nav>
       </div>
       <p className="footer-note">
